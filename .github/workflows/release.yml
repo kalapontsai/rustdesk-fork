@@ -225,85 +225,121 @@ jobs:
           # by the GitHub runner). `hwcodec` itself only wires up the
           # codec layer, it does not need the SDKs, so it stays.
           #
-          # #14 (37796184196) failed with MSB3073 during the cmake install
-          # step of `flutter build windows --release`. The MSB3073 error
-          # only echoes the .bat content (setlocal/if errorlevel/etc.) and
-          # never shows the real cmake error. Capture everything to
-          # build.log and dump the tail + CMake error logs on failure so
-          # the next iteration can read the actual root cause from the
-          # GitHub log instead of guessing.
-          set +e
+          # #14 (37796184196) / #15 (37804685859) failed with MSB3073
+          # during the cmake install step inside `flutter build windows
+          # --release`. MSB3073 only echoes the .bat content
+          # (setlocal/if %errorlevel% neq 0) and never prints the real
+          # cmake error. This step now collects every relevant artefact
+          # when build.py fails so the next iteration can read the
+          # actual root cause from a single job log.
+          set -o pipefail
+
+          echo "============================================================"
+          echo " Build helperdesk"
+          echo "============================================================"
+
           python3 ./build.py --portable --flutter --skip-portable-pack --hwcodec 2>&1 | tee build.log
-          rc=${PIPESTATUS[0]}
-          set -e
+          BUILD_EXIT=${PIPESTATUS[0]}
+          # set -e stays OFF: BUILD_EXIT is read below to branch on
+          # build.py's actual exit code; `set -e` would abort the
+          # script before the diagnostic block could run.
 
-          # Re-run the cmake build + install steps in --verbose so the
-          # log shows the per-file copy / script output that MSB3073
-          # hides. The build.py / flutter build windows --release call
-          # above already ran them once; this re-run is purely to
-          # surface a real cmake error when the first run failed.
-          # See #14 (37796184196) / #15 (37804685859) on
-          # kalapontsai/rustdesk-fork for the original failure mode.
-          echo "------ Re-running cmake INSTALL with --verbose ------"
-          set +e
-          cmake --build flutter/build/windows/x64 --config Release --target INSTALL --verbose 2>&1 | tee cmake_rebuild.log
-          echo "------ Re-running cmake --install with --verbose ------"
-          cmake --install flutter/build/windows/x64 --config Release --verbose 2>&1 | tee cmake_install.log
-          set -e
-          echo "------ End cmake re-run ------"
-          echo ""
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+            echo ""
+            echo "============================================================"
+            echo " build.py FAILED - collecting CMake diagnostics"
+            echo " exit code: $BUILD_EXIT"
+            echo "============================================================"
 
-          # Always run this diagnostic block — even on a "green" exit from
-          # build.py — because the failure mode we keep hitting is "build.py
-          # returns 0 but the cargo cdylib / virtual_display dylib never
-          # landed on disk; the subsequent `flutter build windows --release`
-          # then dies in the cmake install step with a useless MSB3073".
-          # Print enough state that the next failing run points at the
-          # real cause instead of leaving us guessing. See #15
-          # (37804685859) on kalapontsai/rustdesk-fork.
-          echo "------ Post-build diagnostics (build.py rc=$rc) ------"
-          echo "## build.py exit code: $rc"
-          echo ""
-          echo "## Looking for the Rust cdylib (libhelperdesk* / helperdesk*)"
-          find . \( -path ./flutter/build -o -path ./target/x86_64-pc-windows-msvc/release/deps -o -path ./target/x86_64-pc-windows-msvc/release/build -o -path ./target/release/deps -o -path ./target/release/build \) -prune -o \
-            -type f \( -iname 'libhelperdesk*' -o -iname 'helperdesk*' -o -iname 'librustdesk*' \) -print 2>/dev/null \
-            | grep -E '\.(dll|lib|so|dylib|a)$' \
-            | head -20
-          echo ""
-          echo "## Looking for the virtual_display dylib (build.py copies this)"
-          find . -type f \( -name 'dylib_virtual_display.dll' -o -name 'libdylib_virtual_display*.a' -o -name 'dylib_virtual_display*.dll' \) 2>/dev/null | head -10
-          echo ""
-          echo "## target/ tree (first 30 entries)"
-          for tdir in target target/x86_64-pc-windows-msvc; do
-            if [[ -d "$tdir" ]]; then
-              echo "## $tdir/:"
-              find "$tdir" -maxdepth 2 -type d 2>/dev/null | head -30
+            echo ""
+            echo "===== CMakeError.log / CMakeOutput.log ====="
+            find flutter/build -type f \
+              \( -name 'CMakeError.log' -o -name 'CMakeOutput.log' \) \
+              -print 2>/dev/null |
+            while read -r f; do
               echo ""
-              echo "## $tdir/release/ entries (first 50):"
-              if [[ -d "$tdir/release" ]]; then
-                ls -lah "$tdir/release" 2>/dev/null | head -50
-              fi
-            fi
-          done
-          echo "------ End post-build diagnostics ------"
-          echo ""
+              echo "===== $f ====="
+              cat "$f"
+              echo "===== end $f ====="
+            done
 
-          if [[ $rc -ne 0 ]]; then
-            echo "::error::build.py exited with $rc"
-            echo "------ last 150 lines of build.log ------"
-            tail -n 150 build.log
-            echo "------ end build.log tail ------"
-            echo "------ CMake error logs (CMakeFiles/CMakeError.log / CMakeOutput.log) ------"
-            find flutter/build -type f \( -name 'CMakeError.log' -o -name 'CMakeOutput.log' \) -print 2>/dev/null \
-              | while read -r f; do
-                  echo "===== $f (last 200 lines) ====="
-                  tail -n 200 "$f"
-                  echo "===== end $f ====="
-                done
-            echo "------ flutter/build tree (top 40) ------"
-            find flutter/build -maxdepth 4 -type d 2>/dev/null | head -40
-            exit $rc
+            echo ""
+            echo "===== CMake configure/build/install files ====="
+            find flutter/build/windows -type f \
+              \( -name '*.log' -o -name '*.txt' -o -name '*.rsp' \) \
+              -print 2>/dev/null |
+            while read -r f; do
+              echo ""
+              echo "===== $f ====="
+              tail -n 300 "$f" || true
+              echo "===== end $f ====="
+            done
+
+            echo ""
+            echo "===== INSTALL.vcxproj / cmake_install.cmake context ====="
+            find flutter/build/windows -type f \
+              \( -name 'INSTALL.vcxproj' -o -name 'cmake_install.cmake' \) \
+              -print 2>/dev/null |
+            while read -r f; do
+              echo ""
+              echo "===== $f ====="
+              tail -n 300 "$f" || true
+              echo "===== end $f ====="
+            done
+
+            echo ""
+            echo "===== build.log: likely errors ====="
+            grep -Ein \
+              'error|failed|fatal|exception|cannot|not found|CMake Error|MSB[0-9]+|LINK : fatal|LNK[0-9]+|C[0-9]{4}' \
+              build.log |
+              tail -n 300 || true
+
+            echo ""
+            echo "===== Rust cdylib files ====="
+            find . -type f \
+              \( -name 'libhelperdesk*.dll' \
+              -o -name 'helperdesk*.dll' \
+              -o -name 'librustdesk*.dll' \) \
+              -print | head -100
+
+            echo ""
+            echo "===== virtual_display dylib files ====="
+            find . -type f \
+              \( -name 'dylib_virtual_display*.dll' \
+              -o -name 'libdylib_virtual_display*.dll' \) \
+              -print | head -100
+
+            exit "$BUILD_EXIT"
           fi
+
+          echo ""
+          echo "============================================================"
+          echo " build.py completed successfully"
+          echo "============================================================"
+
+          echo "Looking for the Rust cdylib"
+          find . -type f \
+            \( -name 'libhelperdesk*.dll' \
+            -o -name 'helperdesk*.dll' \
+            -o -name 'librustdesk*.dll' \) \
+            -print | head -100
+
+          echo "Looking for the virtual_display dylib"
+          find . -type f \
+            \( -name 'dylib_virtual_display*.dll' \
+            -o -name 'libdylib_virtual_display*.dll' \) \
+            -print | head -100
+
+          echo "CMake diagnostics"
+          find flutter/build -type f \
+            \( -name 'CMakeError.log' -o -name 'CMakeOutput.log' \) \
+            -print 2>/dev/null |
+          while read -r f; do
+            echo "===== $f ====="
+            cat "$f"
+            echo "===== end $f ====="
+          done
+
           # build.py leaves the GUI executable and bundled assets under
           # flutter/build/windows/x64/runner/Release/. Rename to a stable
           # path so the upload step and any later tooling can rely on it.
