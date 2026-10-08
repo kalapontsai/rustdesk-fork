@@ -179,8 +179,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.75.0
         with:
-          toolchain: ${{ env.RUST_VERSION }}
           targets: x86_64-pc-windows-msvc
+        # Note: `with.toolchain` is intentionally omitted. The action's
+        # ref `@1.75.0` already pins the toolchain; passing `toolchain:`
+        # would override the ref and require a fully-versioned string
+        # (e.g. `1.75.0`, not `1.75`) or rustup will fail. `env.RUST_VERSION`
+        # stays as documentation for the other steps that read it.
 
       - uses: Swatinem/rust-cache@v2
         with:
