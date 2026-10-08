@@ -30,7 +30,13 @@ jobs:
           submodules: recursive
 
       - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v3
+        # The v2 line of this action still targets Node 20, which GitHub
+        # runners deprecate on 2025-09-19; v3 is not published. The runner
+        # transparently forces Node 24 for legacy actions, so the build still
+        # succeeds — this step just emits a deprecation warning in the log.
+        # Switch to a different action (e.g. egor-tensin/setup-clang) once
+        # upstream releases v3 or stops maintaining the package.
+        uses: KyleMayes/install-llvm-action@v2
         with:
           version: ${{ env.LLVM_VERSION }}
 
