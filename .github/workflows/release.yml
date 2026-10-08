@@ -232,6 +232,42 @@ jobs:
           python3 ./build.py --portable --flutter --skip-portable-pack --hwcodec 2>&1 | tee build.log
           rc=${PIPESTATUS[0]}
           set -e
+
+          # Always run this diagnostic block — even on a "green" exit from
+          # build.py — because the failure mode we keep hitting is "build.py
+          # returns 0 but the cargo cdylib / virtual_display dylib never
+          # landed on disk; the subsequent `flutter build windows --release`
+          # then dies in the cmake install step with a useless MSB3073".
+          # Print enough state that the next failing run points at the
+          # real cause instead of leaving us guessing. See #15
+          # (37804685859) on kalapontsai/rustdesk-fork.
+          echo "------ Post-build diagnostics (build.py rc=$rc) ------"
+          echo "## build.py exit code: $rc"
+          echo ""
+          echo "## Looking for the Rust cdylib (libhelperdesk* / helperdesk*)"
+          find . \( -path ./flutter/build -o -path ./target/x86_64-pc-windows-msvc/release/deps -o -path ./target/x86_64-pc-windows-msvc/release/build -o -path ./target/release/deps -o -path ./target/release/build \) -prune -o \
+            -type f \( -iname 'libhelperdesk*' -o -iname 'helperdesk*' -o -iname 'librustdesk*' \) -print 2>/dev/null \
+            | grep -E '\.(dll|lib|so|dylib|a)$' \
+            | head -20
+          echo ""
+          echo "## Looking for the virtual_display dylib (build.py copies this)"
+          find . -type f \( -name 'dylib_virtual_display.dll' -o -name 'libdylib_virtual_display*.a' -o -name 'dylib_virtual_display*.dll' \) 2>/dev/null | head -10
+          echo ""
+          echo "## target/ tree (first 30 entries)"
+          for tdir in target target/x86_64-pc-windows-msvc; do
+            if [[ -d "$tdir" ]]; then
+              echo "## $tdir/:"
+              find "$tdir" -maxdepth 2 -type d 2>/dev/null | head -30
+              echo ""
+              echo "## $tdir/release/ entries (first 50):"
+              if [[ -d "$tdir/release" ]]; then
+                ls -lah "$tdir/release" 2>/dev/null | head -50
+              fi
+            fi
+          done
+          echo "------ End post-build diagnostics ------"
+          echo ""
+
           if [[ $rc -ne 0 ]]; then
             echo "::error::build.py exited with $rc"
             echo "------ last 150 lines of build.log ------"
