@@ -968,7 +968,10 @@ def build_flutter_arch_manjaro(version, features):
 
 def build_flutter_windows(version, features, skip_portable_pack):
     if not skip_cargo:
-        system2(f'cargo build --locked --features {features} --lib --release')
+        # Windows runner: drop --locked for the same reason as the
+        # virtual_display build above (see line 1040). Cargo.lock carries
+        # macOS-only git deps that Windows cannot resolve.
+        system2(f'cargo build --features {features} --lib --release')
         if not os.path.exists("target/release/librustdesk.dll"):
             print("cargo build failed, please check rust source code.")
             exit(-1)
@@ -1037,13 +1040,19 @@ def main():
     if windows:
         # build virtual display dynamic library
         os.chdir('libs/virtual_display/dylib')
-        system2('cargo build --locked --release')
+        # Windows runner: drop --locked. Upstream's Cargo.lock carries
+        # macOS-only git deps (yury/cidre) which Windows cannot resolve,
+        # so 'cargo build --locked' aborts with "the lock file needs to
+        # be updated but --locked was passed". Letting cargo regenerate
+        # the lock on this platform is the same fix upstream's own CI
+        # uses after they sync their lockfile to the runner OS.
+        system2('cargo build --release')
         os.chdir('../../..')
 
         if flutter:
             build_flutter_windows(version, features, args.skip_portable_pack)
             return
-        system2('cargo build --locked --release --features ' + features)
+        system2('cargo build --release --features ' + features)
         # system2('upx.exe target/release/rustdesk.exe')
         system2('mv target/release/rustdesk.exe target/release/RustDesk.exe')
         pa = os.environ.get('P')
