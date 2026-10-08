@@ -52,16 +52,48 @@ jobs:
         # Upstream's Windows build uses a custom engine build (not the stock
         # one from pub.dev). We must precache + swap, or `flutter build
         # windows` will produce a binary that disagrees with the Rust side.
-        # This step needs PowerShell for `Invoke-WebRequest` and
-        # `Expand-Archive`; the Windows runner default is `pwsh`, so we
-        # only need to opt in explicitly.
+        # The zip's top-level entry is already a `windows-x64-release/`
+        # directory, so `Expand-Archive -DestinationPath windows-x64-release`
+        # produces a nested layout. Pass `-DestinationPath (Get-Location)`
+        # and let the zip's own root land as `./windows-x64-release/`, then
+        # move its contents (one level deep) into the Flutter engine cache.
+        # All file ops run under $env:RUNNER_TEMP to keep the workspace clean.
         shell: pwsh
+        env:
+          ENGINE_DIR: ${{ steps.flutter.outputs['CACHE-PATH'] }}\bin\cache\artifacts\engine\windows-x64-release
         run: |
+          $ErrorActionPreference = 'Stop'
+          $work = Join-Path $env:RUNNER_TEMP 'engine-swap'
+          if (Test-Path $work) { Remove-Item -Recurse -Force $work }
+          New-Item -ItemType Directory -Path $work | Out-Null
+          Push-Location $work
+
           flutter doctor -v
           flutter precache --windows
-          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
-          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
-          Move-Item -Force -Path .\windows-x64-release\* -Destination "${{ steps.flutter.outputs['CACHE-PATH'] }}\bin\cache\artifacts\engine\windows-x64-release\"
+
+          $zip = Join-Path $work 'windows-x64-release.zip'
+          Invoke-WebRequest -UseBasicParsing `
+            -Uri 'https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip' `
+            -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $work
+
+          # The zip expands to <work>/windows-x64-release/<files...>.
+          $src = Join-Path $work 'windows-x64-release'
+          if (-not (Test-Path $src)) {
+            Write-Error "Expected '$src' after Expand-Archive, but it is missing."
+            Get-ChildItem $work | Format-Table Name | Out-String | Write-Host
+            exit 1
+          }
+          if (-not (Test-Path $env:ENGINE_DIR)) {
+            New-Item -ItemType Directory -Force -Path $env:ENGINE_DIR | Out-Null
+          }
+          # Mirror contents (files + dirs) into the engine cache. Move-Item
+          # requires the destination directory to exist and to be a directory,
+          # which the precache step above has already created.
+          Get-ChildItem -Force $src | ForEach-Object {
+            Move-Item -Force -Path $_.FullName -Destination $env:ENGINE_DIR
+          }
+          Pop-Location
 
       - name: Patch flutter (dropdown filter for 3.24.5)
         shell: bash
