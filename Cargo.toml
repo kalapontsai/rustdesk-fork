@@ -1,15 +1,15 @@
 [package]
-name = "rustdesk"
+name = "helperdesk"
 version = "1.5.0"
-authors = ["rustdesk <info@rustdesk.com>"]
+authors = ["HelperDesk <info@helperdesk.local>"]
 edition = "2021"
 build= "build.rs"
-description = "RustDesk Remote Desktop"
-default-run = "rustdesk"
+description = "HelperDesk Remote Desktop"
+default-run = "helperdesk"
 rust-version = "1.75"
 
 [lib]
-name = "librustdesk"
+name = "libhelperdesk"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
