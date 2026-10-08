@@ -25,18 +25,18 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Checkout source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
       - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432f68818ab8f0 # v2.0.9
+        uses: KyleMayes/install-llvm-action@v2
         with:
           version: ${{ env.LLVM_VERSION }}
 
       - name: Install Flutter
         id: flutter
-        uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225 # v2.12.0
+        uses: subosito/flutter-action@v2
         with:
           channel: "stable"
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -65,21 +65,20 @@ jobs:
           fi
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        uses: dtolnay/rust-toolchain@1
         with:
           toolchain: ${{ env.RUST_VERSION }}
           targets: x86_64-pc-windows-msvc
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: windows-x64
 
       - name: Setup vcpkg
-        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: C:\vcpkg
           vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
-          vcpkgJsonGlob: "**/vcpkg.json"
           doNotCache: false
 
       - name: Install vcpkg dependencies (x64-windows-static)
@@ -101,14 +100,14 @@ jobs:
         shell: bash
         run: |
           python3 ./build.py --portable --flutter --skip-portable-pack --hwcodec --vram
-          # The build leaves everything under flutter/build/windows/x64/runner/Release.
-          # Rename to a stable path so the upload step and any later tooling can
-          # rely on it.
+          # build.py leaves the GUI executable and bundled assets under
+          # flutter/build/windows/x64/runner/Release/. Rename to a stable
+          # path so the upload step and any later tooling can rely on it.
           mv ./flutter/build/windows/x64/runner/Release ./helperdesk
           ls -la ./helperdesk | head -30
 
       - name: Upload helperdesk-windows-x64
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v4
         with:
           name: helperdesk-windows-x64
           path: helperdesk
