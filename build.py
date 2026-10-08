@@ -972,8 +972,24 @@ def build_flutter_windows(version, features, skip_portable_pack):
         # virtual_display build above (see line 1040). Cargo.lock carries
         # macOS-only git deps that Windows cannot resolve.
         system2(f'cargo build --features {features} --lib --release')
-        if not os.path.exists("target/release/librustdesk.dll"):
-            print("cargo build failed, please check rust source code.")
+        # After the RustDesk -> HelperDesk rename, [lib].name is
+        # `libhelperdesk`. rust on Windows keeps the crate name verbatim
+        # as the cdylib filename, so cargo should land
+        # target/release/libhelperdesk.dll. The earlier librustdesk.dll
+        # check tripped even when cargo finished cleanly. Match anything
+        # *helperdesk*.dll; on miss, dump the actual release/ contents so
+        # the next iteration knows where the cdylib went. See #11
+        # (37778132455) on kalapontsai/rustdesk-fork.
+        import glob as _glob
+        _candidates = _glob.glob("target/release/*helperdesk*.dll")
+        if not _candidates:
+            print("cargo build failed: no *helperdesk*.dll under target/release/", flush=True)
+            print("target/release/ entries:", flush=True)
+            for _e in sorted(_glob.glob("target/release/*")):
+                print(f"  {_e}", flush=True)
+            print("target/release/deps/ entries (first 30):", flush=True)
+            for _e in sorted(_glob.glob("target/release/deps/*"))[:30]:
+                print(f"  {_e}", flush=True)
             exit(-1)
     os.chdir('flutter')
     system2('flutter build windows --release')
