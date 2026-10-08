@@ -50,6 +50,39 @@ jobs:
           name: bridge-artifact
           path: ./
 
+      - name: Verify bridge artifacts
+        # The download above can silently succeed with an empty directory if
+        # the artifact is missing or its content got rotated out. Fail fast
+        # here so the next step does not error with a confusing
+        # "Type 'RustdeskImpl' / 'HelperdeskImpl' not found" much later in
+        # `flutter build windows`. See #11 (37786717246) on
+        # kalapontsai/rustdesk-fork.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = @(
+            'src/bridge_generated.rs',
+            'src/bridge_generated.io.rs',
+            'flutter/lib/generated_bridge.dart',
+            'flutter/lib/generated_bridge.freezed.dart'
+          )
+          $missing = @()
+          foreach ($p in $expected) {
+            if (-not (Test-Path $p)) { $missing += $p }
+            else {
+              $size = (Get-Item $p).Length
+              Write-Host "  OK  $p  ($size bytes)"
+            }
+          }
+          if ($missing.Count -gt 0) {
+            Write-Host "::error::Missing bridge artifact files:"
+            $missing | ForEach-Object { Write-Host "  - $_" }
+            Write-Host "Working directory contents:"
+            Get-ChildItem -Force | Select-Object Name | Format-Table -AutoSize | Out-String | Write-Host
+            exit 1
+          }
+          Write-Host "All bridge artifacts present."
+
       - name: Install LLVM and Clang
         # The v2 line of this action still targets Node 20, which GitHub
         # runners deprecate on 2025-09-19; v3 is not published. The runner
