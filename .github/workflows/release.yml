@@ -52,13 +52,16 @@ jobs:
         # Upstream's Windows build uses a custom engine build (not the stock
         # one from pub.dev). We must precache + swap, or `flutter build
         # windows` will produce a binary that disagrees with the Rust side.
-        shell: bash
+        # This step needs PowerShell for `Invoke-WebRequest` and
+        # `Expand-Archive`; the Windows runner default is `pwsh`, so we
+        # only need to opt in explicitly.
+        shell: pwsh
         run: |
           flutter doctor -v
           flutter precache --windows
           Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
           Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
-          mv -Force windows-x64-release/* "${{ steps.flutter.outputs['CACHE-PATH'] }}/bin/cache/artifacts/engine/windows-x64-release/"
+          Move-Item -Force -Path .\windows-x64-release\* -Destination "${{ steps.flutter.outputs['CACHE-PATH'] }}\bin\cache\artifacts\engine\windows-x64-release\"
 
       - name: Patch flutter (dropdown filter for 3.24.5)
         shell: bash
