@@ -178,7 +178,16 @@ jobs:
       - name: Build helperdesk
         shell: bash
         run: |
-          python3 ./build.py --portable --flutter --skip-portable-pack --hwcodec --vram
+          # --vram intentionally omitted. That feature gates NVIDIA / AMD
+          # video SDK calls in librustdesk and requires the matching
+          # vcpkg ports (nvidia-video-codec-sdk, amf) on the runner.
+          # Our windows-2022 image installs the default static triplet
+          # only, so `--features inline,hwcodec,vram,flutter` produces a
+          # `librustdesk.dll` that never lands on disk; build.py then
+          # trips its existence check and exits non-zero (logged as 127
+          # by the GitHub runner). `hwcodec` itself only wires up the
+          # codec layer, it does not need the SDKs, so it stays.
+          python3 ./build.py --portable --flutter --skip-portable-pack --hwcodec
           # build.py leaves the GUI executable and bundled assets under
           # flutter/build/windows/x64/runner/Release/. Rename to a stable
           # path so the upload step and any later tooling can rely on it.
