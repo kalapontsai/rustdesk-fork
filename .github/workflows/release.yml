@@ -220,7 +220,34 @@ jobs:
           # trips its existence check and exits non-zero (logged as 127
           # by the GitHub runner). `hwcodec` itself only wires up the
           # codec layer, it does not need the SDKs, so it stays.
-          python3 ./build.py --portable --flutter --skip-portable-pack --hwcodec
+          #
+          # #14 (37796184196) failed with MSB3073 during the cmake install
+          # step of `flutter build windows --release`. The MSB3073 error
+          # only echoes the .bat content (setlocal/if errorlevel/etc.) and
+          # never shows the real cmake error. Capture everything to
+          # build.log and dump the tail + CMake error logs on failure so
+          # the next iteration can read the actual root cause from the
+          # GitHub log instead of guessing.
+          set +e
+          python3 ./build.py --portable --flutter --skip-portable-pack --hwcodec 2>&1 | tee build.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [[ $rc -ne 0 ]]; then
+            echo "::error::build.py exited with $rc"
+            echo "------ last 150 lines of build.log ------"
+            tail -n 150 build.log
+            echo "------ end build.log tail ------"
+            echo "------ CMake error logs (CMakeFiles/CMakeError.log / CMakeOutput.log) ------"
+            find flutter/build -type f \( -name 'CMakeError.log' -o -name 'CMakeOutput.log' \) -print 2>/dev/null \
+              | while read -r f; do
+                  echo "===== $f (last 200 lines) ====="
+                  tail -n 200 "$f"
+                  echo "===== end $f ====="
+                done
+            echo "------ flutter/build tree (top 40) ------"
+            find flutter/build -maxdepth 4 -type d 2>/dev/null | head -40
+            exit $rc
+          fi
           # build.py leaves the GUI executable and bundled assets under
           # flutter/build/windows/x64/runner/Release/. Rename to a stable
           # path so the upload step and any later tooling can rely on it.
