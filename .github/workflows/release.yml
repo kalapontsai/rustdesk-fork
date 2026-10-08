@@ -1,0 +1,116 @@
+name: build-windows
+
+# Manual-only trigger. This is a HelperDesk fork, not the upstream
+# rustdesk project, so we do not want this to fire on every push /
+# pull_request. The upstream `flutter-build.yml` and `flutter-ci.yml`
+# already cover PR / push CI; this workflow is purely for cutting
+# the renamed Windows artifact on demand.
+on:
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: "3.24.5"
+  RUST_VERSION: "1.75"
+  LLVM_VERSION: "15.0.6"
+  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  VCPKG_CMAKE_VERSION: "4.3.0"
+  # Disable the GitHub Actions cache backend that talks to ACTIONS_CACHE_URL.
+  # We do not set it on a self-triggered job, and vcpkg errors out if it
+  # cannot reach the cache endpoint.
+  VCPKG_BINARY_SOURCES: "clear"
+
+jobs:
+  build-windows-x64:
+    name: helperdesk-windows-x64
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432f68818ab8f0 # v2.0.9
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install Flutter
+        id: flutter
+        uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225 # v2.12.0
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          architecture: x64
+
+      - name: Replace engine with rustdesk custom flutter engine
+        # Upstream's Windows build uses a custom engine build (not the stock
+        # one from pub.dev). We must precache + swap, or `flutter build
+        # windows` will produce a binary that disagrees with the Rust side.
+        shell: bash
+        run: |
+          flutter doctor -v
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          mv -Force windows-x64-release/* "${{ steps.flutter.outputs['CACHE-PATH'] }}/bin/cache/artifacts/engine/windows-x64-release/"
+
+      - name: Patch flutter (dropdown filter for 3.24.5)
+        shell: bash
+        run: |
+          FLUTTER_ROOT="$(dirname $(dirname $(which flutter)))"
+          cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff "$FLUTTER_ROOT"
+          cd "$FLUTTER_ROOT"
+          if [[ "${{ env.FLUTTER_VERSION }}" == "3.24.5" ]]; then
+            git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: windows-x64
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          vcpkgJsonGlob: "**/vcpkg.json"
+          doNotCache: false
+
+      - name: Install vcpkg dependencies (x64-windows-static)
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
+        shell: bash
+        run: |
+          if ! $VCPKG_ROOT/vcpkg install --triplet x64-windows-static \
+              --x-install-root="$VCPKG_ROOT/installed"; then
+            find "${VCPKG_ROOT}/" -name "*.log" -print0 | while IFS= read -r -d '' f; do
+              echo "===== $f ====="
+              cat "$f"
+              echo "====="
+            done
+            exit 1
+          fi
+
+      - name: Build helperdesk
+        shell: bash
+        run: |
+          python3 ./build.py --portable --flutter --skip-portable-pack --hwcodec --vram
+          # The build leaves everything under flutter/build/windows/x64/runner/Release.
+          # Rename to a stable path so the upload step and any later tooling can
+          # rely on it.
+          mv ./flutter/build/windows/x64/runner/Release ./helperdesk
+          ls -la ./helperdesk | head -30
+
+      - name: Upload helperdesk-windows-x64
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: helperdesk-windows-x64
+          path: helperdesk
+          if-no-files-found: error
+          retention-days: 14
