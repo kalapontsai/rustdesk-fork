@@ -5,6 +5,11 @@ name: build-windows
 # pull_request. The upstream `flutter-build.yml` and `flutter-ci.yml`
 # already cover PR / push CI; this workflow is purely for cutting
 # the renamed Windows artifact on demand.
+#
+# Two jobs: generate-bridge (Linux, runs flutter_rust_bridge_codegen
+# to produce EventToUI's IntoIntoDart impl + Dart bindings) feeds
+# build-windows-x64 (Windows runner), which downloads the bridge
+# artifact before compiling librustdesk.
 on:
   workflow_dispatch:
 
@@ -20,14 +25,30 @@ env:
   VCPKG_BINARY_SOURCES: "clear"
 
 jobs:
+  generate-bridge:
+    name: flutter-rust-bridge codegen
+    uses: ./.github/workflows/bridge.yml
+
   build-windows-x64:
     name: helperdesk-windows-x64
+    needs: [generate-bridge]
     runs-on: windows-2022
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Restore bridge files
+        # flutter_rust_bridge 1.80.1's StreamSink::add now requires
+        # T: IntoIntoDart<D>, and EventToUI's impl lives in
+        # src/bridge_generated.rs which is generated, not committed.
+        # Without this artifact the Rust build fails with
+        # "the trait bound `EventToUI: IntoIntoDart<_>` is not satisfied".
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
 
       - name: Install LLVM and Clang
         # The v2 line of this action still targets Node 20, which GitHub
