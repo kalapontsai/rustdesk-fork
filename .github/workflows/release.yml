@@ -52,12 +52,11 @@ jobs:
         # Upstream's Windows build uses a custom engine build (not the stock
         # one from pub.dev). We must precache + swap, or `flutter build
         # windows` will produce a binary that disagrees with the Rust side.
-        # The zip's top-level entry is already a `windows-x64-release/`
-        # directory, so `Expand-Archive -DestinationPath windows-x64-release`
-        # produces a nested layout. Pass `-DestinationPath (Get-Location)`
-        # and let the zip's own root land as `./windows-x64-release/`, then
-        # move its contents (one level deep) into the Flutter engine cache.
-        # All file ops run under $env:RUNNER_TEMP to keep the workspace clean.
+        # The zip from rustdesk/engine has no top-level directory: it
+        # contains ~10 files (flutter_windows.dll, gen_snapshot.exe, *.h,
+        # *.lib, *.pdb) flat at the root. So Expand-Archive drops them
+        # directly into $work, and we move every child of $work (files and
+        # dirs) into the engine cache.
         shell: pwsh
         env:
           ENGINE_DIR: ${{ steps.flutter.outputs['CACHE-PATH'] }}\bin\cache\artifacts\engine\windows-x64-release
@@ -75,25 +74,43 @@ jobs:
           Invoke-WebRequest -UseBasicParsing `
             -Uri 'https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip' `
             -OutFile $zip
+
+          # Inspect the archive first to learn the real layout, log it, then extract.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+            $entries = $archive.Entries | ForEach-Object { $_.FullName }
+            Write-Host "Archive top-level entries (first 20):"
+            $entries | Select-Object -First 20 | ForEach-Object { Write-Host "  $_" }
+          } finally {
+            $archive.Dispose()
+          }
           Expand-Archive -Force -Path $zip -DestinationPath $work
 
-          # The zip expands to <work>/windows-x64-release/<files...>.
-          $src = Join-Path $work 'windows-x64-release'
-          if (-not (Test-Path $src)) {
-            Write-Error "Expected '$src' after Expand-Archive, but it is missing."
-            Get-ChildItem $work | Format-Table Name | Out-String | Write-Host
-            exit 1
-          }
+          Write-Host "After Expand-Archive, $work contains:"
+          Get-ChildItem -Force $work | Format-Table Name, Length | Out-String | Write-Host
+
           if (-not (Test-Path $env:ENGINE_DIR)) {
             New-Item -ItemType Directory -Force -Path $env:ENGINE_DIR | Out-Null
           }
-          # Mirror contents (files + dirs) into the engine cache. Move-Item
-          # requires the destination directory to exist and to be a directory,
-          # which the precache step above has already created.
-          Get-ChildItem -Force $src | ForEach-Object {
+
+          # Move every direct child of $work (except the zip itself) into the
+          # engine cache. If the zip had a single top-level dir, descend into
+          # it; otherwise treat $work's children as the payload.
+          $payload = $work
+          $topDirs = Get-ChildItem -Directory -Force $work
+          if ($topDirs.Count -eq 1) {
+            $payload = $topDirs[0].FullName
+            Write-Host "Single top-level directory detected: $payload"
+          }
+
+          Get-ChildItem -Force $payload | Where-Object { $_.Name -ne 'windows-x64-release.zip' } | ForEach-Object {
+            Write-Host "  moving $($_.Name)"
             Move-Item -Force -Path $_.FullName -Destination $env:ENGINE_DIR
           }
           Pop-Location
+          Write-Host "Engine cache after swap:"
+          Get-ChildItem -Force $env:ENGINE_DIR | Format-Table Name, Length | Out-String | Write-Host
 
       - name: Patch flutter (dropdown filter for 3.24.5)
         shell: bash
