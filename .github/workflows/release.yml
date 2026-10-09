@@ -232,7 +232,14 @@ jobs:
           # cmake error. This step now collects every relevant artefact
           # when build.py fails so the next iteration can read the
           # actual root cause from a single job log.
-          set -o pipefail
+          #
+          # set -o pipefail is intentionally NOT set: Git for Windows
+          # (the shell on windows-2022 runners) has a different
+          # pipefail interaction with `tee` that can swallow BUILD_EXIT
+          # and skip the diagnostic branch entirely. Tracking PIPESTATUS
+          # manually is enough here, and `set -e` is left OFF so the
+          # diagnostic block always runs after a failure.
+          set +e
 
           echo "============================================================"
           echo " Build helperdesk"
@@ -240,19 +247,27 @@ jobs:
 
           python3 ./build.py --portable --flutter --skip-portable-pack --hwcodec 2>&1 | tee build.log
           BUILD_EXIT=${PIPESTATUS[0]}
-          # set -e stays OFF: BUILD_EXIT is read below to branch on
-          # build.py's actual exit code; `set -e` would abort the
-          # script before the diagnostic block could run.
+
+          echo "DEBUG: BUILD_EXIT=$BUILD_EXIT  PIPESTATUS=${PIPESTATUS[*]}"
 
           if [ "$BUILD_EXIT" -ne 0 ]; then
             echo ""
+            echo "==== ENTERED FAIL BRANCH ===="
             echo "============================================================"
             echo " build.py FAILED - collecting CMake diagnostics"
             echo " exit code: $BUILD_EXIT"
             echo "============================================================"
 
             echo ""
-            echo "===== CMakeError.log / CMakeOutput.log ====="
+            echo "==== SECTION 1/6: flutter/build directory inventory ===="
+            if [[ -d flutter/build ]]; then
+              find flutter/build -maxdepth 5 -type d 2>/dev/null | head -50
+            else
+              echo "NO flutter/build/ DIRECTORY"
+            fi
+
+            echo ""
+            echo "==== SECTION 2/6: CMakeError.log / CMakeOutput.log ===="
             find flutter/build -type f \
               \( -name 'CMakeError.log' -o -name 'CMakeOutput.log' \) \
               -print 2>/dev/null |
@@ -262,9 +277,10 @@ jobs:
               cat "$f"
               echo "===== end $f ====="
             done
+            echo "(end SECTION 2)"
 
             echo ""
-            echo "===== CMake configure/build/install files ====="
+            echo "==== SECTION 3/6: CMake configure/build/install files ===="
             find flutter/build/windows -type f \
               \( -name '*.log' -o -name '*.txt' -o -name '*.rsp' \) \
               -print 2>/dev/null |
@@ -274,9 +290,10 @@ jobs:
               tail -n 300 "$f" || true
               echo "===== end $f ====="
             done
+            echo "(end SECTION 3)"
 
             echo ""
-            echo "===== INSTALL.vcxproj / cmake_install.cmake context ====="
+            echo "==== SECTION 4/6: INSTALL.vcxproj / cmake_install.cmake ===="
             find flutter/build/windows -type f \
               \( -name 'INSTALL.vcxproj' -o -name 'cmake_install.cmake' \) \
               -print 2>/dev/null |
@@ -286,24 +303,25 @@ jobs:
               tail -n 300 "$f" || true
               echo "===== end $f ====="
             done
+            echo "(end SECTION 4)"
 
             echo ""
-            echo "===== build.log: likely errors ====="
+            echo "==== SECTION 5/6: build.log likely errors ===="
             grep -Ein \
               'error|failed|fatal|exception|cannot|not found|CMake Error|MSB[0-9]+|LINK : fatal|LNK[0-9]+|C[0-9]{4}' \
               build.log |
               tail -n 300 || true
+            echo "(end SECTION 5)"
 
             echo ""
-            echo "===== Rust cdylib files ====="
+            echo "==== SECTION 6/6: Rust cdylib + virtual_display dylib ===="
+            echo "-- Rust cdylib files --"
             find . -type f \
               \( -name 'libhelperdesk*.dll' \
               -o -name 'helperdesk*.dll' \
               -o -name 'librustdesk*.dll' \) \
               -print | head -100
-
-            echo ""
-            echo "===== virtual_display dylib files ====="
+            echo "-- virtual_display dylib files --"
             find . -type f \
               \( -name 'dylib_virtual_display*.dll' \
               -o -name 'libdylib_virtual_display*.dll' \) \
