@@ -126,6 +126,19 @@ pub extern "C" fn rustdesk_core_main() -> bool {
     false
 }
 
+/// HelperDesk: native runner calls this when the user clicks the main
+/// window's close button (`WM_CLOSE`). We hide the window instead of
+/// letting Flutter / Win32 destroy it, and ask the Rust tray subsystem
+/// to surface its icon so the user can reopen via left-click or the
+/// tray menu. Idempotent and safe to call before any tray exists —
+/// `start_tray()` is a no-op on subsequent invocations as long as the
+/// single-instance tray lock is held.
+#[cfg(windows)]
+#[no_mangle]
+pub extern "C" fn helperdesk_hide_to_tray() {
+    crate::tray::start_tray();
+}
+
 #[cfg(target_os = "macos")]
 #[no_mangle]
 pub extern "C" fn handle_applicationShouldOpenUntitledFile() {

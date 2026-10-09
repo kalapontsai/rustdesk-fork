@@ -50,7 +50,7 @@ mod port_forward;
 mod port_forward_mux;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-mod tray;
+pub mod tray;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod whiteboard;

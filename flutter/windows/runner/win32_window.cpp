@@ -55,11 +55,31 @@ HICON LoadCustomIcon() {
 
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 
-// Scale helper to convert logical scaler values to physical using passed in
-// scale factor
-int Scale(int source, double scale_factor) {
-  return static_cast<int>(source * scale_factor);
+// HelperDesk: lazy-resolve the `helperdesk_hide_to_tray` FFI entry from
+// `librustdesk.dll`. The DLL is loaded by the native runner's wWinMain,
+// so by the time we receive a `WM_CLOSE` the symbol is already in
+// memory. Cached after first lookup so the WM_CLOSE hot path stays a
+// single function-pointer call.
+typedef void (*HelperDeskHideToTrayFn)();
+static HelperDeskHideToTrayFn g_hide_to_tray = nullptr;
+static bool g_hide_to_tray_lookup_done = false;
+static void CallHelperDeskHideToTray() {
+  if (g_hide_to_tray_lookup_done) {
+    if (g_hide_to_tray) g_hide_to_tray();
+    return;
+  }
+  g_hide_to_tray_lookup_done = true;
+  HMODULE mod = GetModuleHandleA("librustdesk.dll");
+  if (mod == nullptr) {
+    mod = LoadLibraryA("librustdesk.dll");
+  }
+  if (mod != nullptr) {
+    g_hide_to_tray = reinterpret_cast<HelperDeskHideToTrayFn>(
+        GetProcAddress(mod, "helperdesk_hide_to_tray"));
+  }
+  if (g_hide_to_tray) g_hide_to_tray();
 }
+
 
 // Dynamically loads the |EnableNonClientDpiScaling| from the User32 module.
 // This API is only needed for PerMonitor V1 awareness mode.
@@ -244,6 +264,21 @@ Win32Window::MessageHandler(HWND hwnd,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
   switch (message) {
+    // HelperDesk: route main-window close to the system tray instead of
+    // letting Win32 destroy the window. We hide the window (it disappears
+    // from the taskbar as well) and ask the Rust tray subsystem to surface
+    // its icon. The user reopens the window by left-clicking the tray
+    // icon, and exits the process via the tray menu's "Stop service" item.
+    // Idempotent: subsequent WM_CLOSE on an already-hidden window is a
+    // no-op (ShowWindow(SW_HIDE) on a hidden window returns false but
+    // does not surface an error).
+    case WM_CLOSE:
+      CallHelperDeskHideToTray();
+      if (window_handle_ != nullptr) {
+        ShowWindow(window_handle_, SW_HIDE);
+      }
+      return 0;
+
     case WM_DESTROY:
       window_handle_ = nullptr;
       Destroy();
